@@ -19,10 +19,18 @@ COLUMN_A_NHO = [[],[],[],[]]
 COLUMN_A_HOC = [[],[],[],[]] 
 COLUMN_BETA  = [[],[],[],[]] 
 COLUMN_GAMMA = [[],[],[],[]]
+COLUMN_PHI   = [[],[],[],[]]
+COLUMN_PSI   = [[],[],[],[]]
+
+#COLUMNS FOR # OF H-BONDS, SAME STRUCTURE AS ABOVE
+NUM_H_BONDS = [0,0,0,0]
 
 def getHforAtom(appf, anAtom):
+    if(anAtom.getResnum() < 1):
+        return None
     resnumneighbors = appf.select('resnum '+str(anAtom.getResnum()))
-    curMin = 50
+    curMin = 100000
+    target = None
     for at in resnumneighbors:
         if(at.getElement() == 'H'):
             #FILTER OTHER HYDROGENS
@@ -33,22 +41,14 @@ def getHforAtom(appf, anAtom):
                 target = at
     return target
 
-def setHcoords(nAtom, oAtom, cAtom):
-    # get coordinates
-    nCoords = nAtom.getCoords()
-    oCoords = oAtom.getCoords()
-    cCoords = cAtom.getCoords()
-    # C-O vector
-    co = np.subtract(cCoords,oCoords)
-    adjustment = np.divide(co,np.linalg.norm(co))
-    hCoords = np.add(nCoords,adjustment)
-    return hCoords
-
 def getAntecedent (appf, anAtom):
+    if(anAtom.getResnum() < 1):
+        return None
     aminoGroup = appf.select('resnum ' + str(anAtom.getResnum()))
     for at in aminoGroup:
         if(at.getName() == 'C'):
             return at
+    return None
 
 def getSSIndex(acc_ante):
     #RETURN 0=ALPHA, 1=310ALPHA, 2=PARALLEL, 3=ANTIPARALLEL
@@ -85,12 +85,22 @@ def getBetaAngle(appf,cAtom,oAtom,hAtom):
         n1_unit = np.divide(n1,np.linalg.norm(n1))
         # find projection of H-O onto plane
         out = np.dot(ho,n1_unit)
+        #print out
         ho_ip = np.subtract(ho,np.multiply(n1_unit,out))
         ang = np.linalg.norm(ho_ip)/np.linalg.norm(ho)
         ang = math.acos(ang)
+        #print "O"
+        #print oCoords
+        #print "C"
+        #print cCoords
+        #print "ho_ip"
+        #print ho_ip
+        #print np.add(ho_ip,oCoords)
         # we can think of H-O vector as the normal vector to a plane
         #ang = math.acos(np.dot(ho,n1)/(np.linalg.norm(ho)*np.linalg.norm(n1)))
         ang = ang*180/math.pi
+        if(out < 0):
+            ang = ang * -1
         # then we just need to adjust output by 90 degrees to get correct answer
         return ang
 
@@ -117,11 +127,17 @@ def getGammaAngle(appf,cAtom,oAtom,hAtom):
     hproj = np.dot(ho,oc_unit)
     # get projection of H-O onto N-C-O plane
     out = np.dot(ho,n1_unit)
+    n2 = np.cross(np.multiply(n1_unit,out),oc)
+    #print n2
     ho_ip = np.subtract(ho,np.multiply(n1_unit,out))
+    test = np.dot(n2,ho_ip)
+    #print test
     ang = hproj/np.linalg.norm(ho_ip)
     ang = math.acos(ang)
     ang = ang*180/math.pi
-    return ang*-1
+    #if(test < 0):
+    #    ang = ang * -1
+    return ang
     
 # find the number of models in a file
 def getNumMdls(pfile):
@@ -147,6 +163,8 @@ def checkHBonds(appf,no_d, ox_a, ssindex):
         return
 
     h_don = getHforAtom(appf,no_d)
+    if(h_don == None):
+        return
     #2 Dist(h_don, acc) < 3.5
     ha_dist  = pr.calcDistance(h_don, ox_a)
     if( ha_dist >=  HYDROGEN_ACCEPTOR_MAXDISTANCE):
@@ -163,6 +181,8 @@ def checkHBonds(appf,no_d, ox_a, ssindex):
     #    return
 
     acc_ante = getAntecedent(appf, ox_a) #Get acc_ante
+    if(acc_ante == None):
+        return
     #5 Angle(h_don, acc, acc_ante) > 90
     haa_ang = pr.calcAngle( h_don, ox_a, acc_ante )
     if( haa_ang < HAB_ANGLE ):
@@ -183,6 +203,7 @@ def checkHBonds(appf,no_d, ox_a, ssindex):
 #    print ssindex
     #towrite = ",".join([str(h_don.getResnum()),str(h_don.getCoords())])
     #fp.write(towrite+"\r\n")
+    NUM_H_BONDS[ssindex] += 1
     COLUMN_D_ON  [ssindex].append(da_dist)
     COLUMN_D_OH  [ssindex].append(ha_dist)
     COLUMN_A_NHO [ssindex].append(dha_ang)
@@ -228,9 +249,13 @@ def parseSheets(appf, los):
 
 # some mathy functions
 def sumMeans(n1,n2,u1,u2):
+    if(n2 == 0):
+        return u1
     return (n1*u1+n2*u2) / (n1+n2)
 
 def sumStds(n1,n2,u1,u2,s1,s2):
+    if(n2 == 0):
+        return s1
     x1 = (n1*s1*s1+n2*s2*s2) / (n1+n2)
     x2 = (n1*n2*((u1-u2)**2))/((n1+n2)**2)
     return math.sqrt(x1+x2)
@@ -265,9 +290,9 @@ def runThrough(pfile):
 
     TABLE = [COLUMN_D_ON_AV, COLUMN_D_OH_AV, COLUMN_A_NHO_AV, COLUMN_A_HOC_AV, COLUMN_BETA_AV, COLUMN_GAMMA_AV]
     STDS = [COLUMN_D_ON_STD, COLUMN_D_OH_STD, COLUMN_A_NHO_STD, COLUMN_A_HOC_STD, COLUMN_BETA_STD, COLUMN_GAMMA_STD]
-    print '        D_ON          D_OH      ANGLE(NHO)    ANGLE(HOC)        BETA         GAMMA   '
-    print np.array(TABLE).T
-    print np.array(STDS).T
+    #print '        D_ON          D_OH      ANGLE(NHO)    ANGLE(HOC)        BETA         GAMMA   '
+    #print np.array(TABLE).T
+    #print np.array(STDS).T
     return (TABLE,STDS)
 
 ##runThrough("1A2Z_A_H.pdb")
@@ -304,8 +329,11 @@ for pfile in pFiles:
     COLUMN_A_NHO = [[],[],[],[]] 
     COLUMN_A_HOC = [[],[],[],[]] 
     COLUMN_BETA  = [[],[],[],[]] 
-    COLUMN_GAMMA = [[],[],[],[]] 
-    (results, stds) = runThrough(pfile)
+    COLUMN_GAMMA = [[],[],[],[]]
+    try:
+        (results, stds) = runThrough(pfile)
+    except (AttributeError,ValueError):
+        continue
     # aggregate that shit
     AGGR_D_ON = [sumMeans(LEN_D_ON[i],len(COLUMN_D_ON[i]),AGGR_D_ON[i],
                           results[0][i]) for i in range(4)]
@@ -348,3 +376,6 @@ print ' STANDARD DEVIATIONS '
 print '        D_ON          D_OH      ANGLE(NHO)    ANGLE(HOC)        BETA         GAMMA   '
 STDS = [STD_D_ON,STD_D_OH,STD_A_NHO,STD_A_HOC,STD_BETA,STD_GAMMA]
 print np.array(STDS).T
+
+print 'NUMBER OF H-BONDS'
+print np.array(NUM_H_BONDS).T
